@@ -49,6 +49,9 @@ const server = createServer(async (req, res) => {
       const page = await readFile(join(here, 'index.html'), 'utf8')
       return send(res, 200, 'text/html; charset=utf-8', page.replace('__BOARD_TOKEN__', token))
     }
+    // The page's way back to the token after the server restarted. Same-origin only, as the page
+    // itself is: the host check above refuses rebinding, and other sites cannot read the reply.
+    if (req.method === 'GET' && url.pathname === '/api/token') return send(res, 200, 'text/plain', token)
     if (req.method === 'GET' && url.pathname === '/api/state') {
       const [board, view] = await Promise.all([readJson(boardFile, { nextId: 1, cards: [] }), readJson(viewFile, {})])
       return send(res, 200, 'application/json', JSON.stringify({ board, view }))

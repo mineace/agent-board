@@ -124,7 +124,7 @@
 </dialog>
 
 <script>
-const TOKEN = '__BOARD_TOKEN__'
+let TOKEN = '__BOARD_TOKEN__'
 const STAGES = ['backlog', 'plan', 'approve', 'execute', 'review', 'done']
 const STAGE_NAMES = { backlog: 'Backlog', plan: 'Plan', approve: 'Approve', execute: 'Execute', review: 'Review', done: 'Done' }
 const LABELS = { start: 'Start', approve: 'Approve plan', replan: 'Re-plan', retry: 'Retry', done: 'Mark done', delete: 'Delete', reopen: 'Reopen', merge: 'Merge branch', discard: 'Discard branch' }
@@ -172,9 +172,20 @@ function md(text) {
   return out.join('')
 }
 
+const later = ms => new Promise(r => setTimeout(r, ms))
+const post = action => fetch('/api/action', { method: 'POST', headers: { 'content-type': 'application/json', 'x-board-token': TOKEN }, body: JSON.stringify(action) })
+
+// Saving a setting reloads the board, which restarts this server with a new token:
+// on "Bad token" (or a dropped connection mid-restart) fetch the current one and try once more.
 async function send(action) {
   try {
-    const r = await fetch('/api/action', { method: 'POST', headers: { 'content-type': 'application/json', 'x-board-token': TOKEN }, body: JSON.stringify(action) })
+    let r = await post(action).catch(() => undefined)
+    if (!r || (r.status === 403 && (await r.clone().text()) === 'Bad token')) {
+      await later(r ? 0 : 1500)
+      const t = await fetch('/api/token', { cache: 'no-store' })
+      if (t.ok) TOKEN = await t.text()
+      r = await post(action)
+    }
     if (!r.ok) throw new Error(await r.text())
   } catch (err) {
     alert(`The board could not do that: ${err.message}`)
@@ -347,7 +358,7 @@ $('settingsBtn').onclick = () => {
   settingsForm.elements.reviewModel.value = s.models?.review ?? 'inherit'
   $('settingsDlg').showModal()
 }
-$('settingsDlg').addEventListener('close', () => {
+$('settingsDlg').addEventListener('close', async () => {
   if ($('settingsDlg').returnValue !== 'save') return
   const s = state.view.settings ?? {}
   const f = settingsForm.elements
@@ -360,7 +371,8 @@ $('settingsDlg').addEventListener('close', () => {
   }
   const was = { maxParallel: s.maxParallel, autoStart: s.autoStart, pauseAtLimit: s.pauseAtLimit, worktrees: s.worktrees, notify: s.notify, allowlist: s.allowlist,
     planModel: s.models?.plan, executeModel: s.models?.execute, reviewModel: s.models?.review }
-  for (const [field, value] of Object.entries(next)) if (was[field] !== value) send({ op: 'setting', field, value })
+  // One at a time: the first may restart the server, and the rest follow with the new token.
+  for (const [field, value] of Object.entries(next)) if (was[field] !== value) await send({ op: 'setting', field, value })
 })
 
 for (const b of document.querySelectorAll('[data-cancel]')) b.onclick = () => b.closest('dialog').close('cancel')

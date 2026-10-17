@@ -132,10 +132,10 @@ export const started = (board: Board, id: number, agentId: string, now: number) 
   update(board, id, c => touch(c, now, { agentId, status: `${STAGE_NAMES[c.stage]}: agent working` }, `${STAGE_NAMES[c.stage]} started`))
 
 /** Moves a card on with what its agent answered. */
-export const finished = (board: Board, id: number, reply: string, tokens: number, now: number): Board =>
+export const finished = (board: Board, id: number, reply: string, tokens: number, now: number, cached = 0): Board =>
   update(board, id, c => {
     let answer = reply
-    const spent = { agentId: undefined, tokens: c.tokens + tokens }
+    const spent = { agentId: undefined, tokens: c.tokens + tokens, cached: (c.cached ?? 0) + cached }
     if (c.stage === 'plan') {
       const repo = parseRepo(answer)
       return touch(
@@ -175,9 +175,9 @@ export const finished = (board: Board, id: number, reply: string, tokens: number
   })
 
 /** An agent that ended without answering (error, interruption). */
-export const failed = (board: Board, id: number, why: string, now: number) =>
+export const failed = (board: Board, id: number, why: string, now: number, tokens = 0, cached = 0) =>
   update(board, id, c =>
-    touch(c, now, { agentId: undefined, status: `Needs you: ${STAGE_NAMES[c.stage]} stopped (${why})` }, `${STAGE_NAMES[c.stage]} stopped: ${why}`),
+    touch(c, now, { agentId: undefined, tokens: c.tokens + tokens, cached: (c.cached ?? 0) + cached, status: `Needs you: ${STAGE_NAMES[c.stage]} stopped (${why})` }, `${STAGE_NAMES[c.stage]} stopped: ${why}`),
   )
 
 /**

@@ -28,7 +28,10 @@ export type Card = {
   agentId?: string
   /** Executor runs after a failed review. */
   attempts: number
+  /** New tokens: input, output and cache writes. */
   tokens: number
+  /** Cache reads: the context the agents re-read on every step, far cheaper than new tokens. */
+  cached?: number
   createdAt: number
   updatedAt: number
   log: { at: number; text: string }[]

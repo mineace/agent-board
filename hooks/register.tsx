@@ -160,20 +160,27 @@ async function commitWork($: EngineInterface, card: Card) {
 /** Merge or discard a card's branch, then remove its worktree. */
 async function closeBranch($: EngineInterface, ctx: Ctx, card: Card, how: 'merge' | 'discard') {
   const wt = card.worktree
-  if (!wt) return
+  if (!wt) return void $.ui.toast(`Card #${card.id} has no branch to ${how}.`)
+  const repo = wt.repo ?? ctx.cwd
   const now = await $.clock.now()
+  // Show it working: git can take a while, and a silent button looks broken.
+  const working = `${how === 'merge' ? 'Merging' : 'Discarding'} ${wt.branch}…`
+  await save($, ctx, b => ({ ...b, cards: b.cards.map(c => (c.id === card.id ? { ...c, status: working } : c)) }))
   if (how === 'merge') {
     await commitWork($, card)
-    const merged = await git($, wt.repo ?? ctx.cwd, ['merge', '--no-ff', '--no-edit', wt.branch])
+    const ahead = await git($, repo, ['rev-list', '--count', `HEAD..${wt.branch}`])
+    if (ahead.ok && ahead.out === '0') $.ui.toast(`${wt.branch} has no commits your branch lacks; nothing to merge.`)
+    const merged = await git($, repo, ['merge', '--no-ff', '--no-edit', wt.branch])
     if (!merged.ok) {
-      await git($, wt.repo ?? ctx.cwd, ['merge', '--abort'])
+      await git($, repo, ['merge', '--abort'])
       await save($, ctx, b => gitFailed(b, card.id, `merge of ${wt.branch} failed (${merged.err}); the branch is kept`, now))
       return
     }
   }
-  await git($, wt.repo ?? ctx.cwd, ['worktree', 'remove', '--force', wt.path])
-  await git($, wt.repo ?? ctx.cwd, ['branch', how === 'merge' ? '-d' : '-D', wt.branch])
+  await git($, repo, ['worktree', 'remove', '--force', wt.path])
+  await git($, repo, ['branch', how === 'merge' ? '-d' : '-D', wt.branch])
   await save($, ctx, b => branchClosed(b, card.id, how === 'merge' ? 'merged' : 'discarded', now))
+  $.ui.toast(`Card #${card.id}: ${wt.branch} ${how === 'merge' ? `merged into ${repo}` : 'discarded'}.`)
 }
 
 async function load($: EngineInterface, ctx: Ctx) {
@@ -502,11 +509,13 @@ export const register: Register = (on, options) => {
     if (!card) return done
     const now = await $.clock.now()
     const u = e.usage
-    const tokens = u ? u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens : 0
+    // New tokens are what costs; cache reads (the context re-read on every step) are counted apart.
+    const tokens = u ? u.input_tokens + u.output_tokens + u.cache_creation_input_tokens : 0
+    const cached = u ? u.cache_read_input_tokens : 0
     ctx.suggested.delete(e.agentId)
     if (card.stage === 'execute' && e.reason === 'answer') await commitWork($, card)
     await save($, ctx, b =>
-      e.reason === 'answer' && e.answer.trim() ? finished(b, card.id, e.answer, tokens, now) : failed(b, card.id, e.reason, now),
+      e.reason === 'answer' && e.answer.trim() ? finished(b, card.id, e.answer, tokens, now, cached) : failed(b, card.id, e.reason, now, tokens, cached),
     )
     void pump($, ctx)
     return done
@@ -667,7 +676,7 @@ export const register: Register = (on, options) => {
             #{card.id} {card.title}
           </Text>
           <Text dimColor>
-            {STAGE_NAMES[card.stage]} · {card.status} · {fmtTokens(card.tokens)} tokens
+            {STAGE_NAMES[card.stage]} · {card.status} · {fmtTokens(card.tokens)} tokens{card.cached ? ` (+${fmtTokens(card.cached)} cached reads)` : ''}
           </Text>
           <Box gap={1} flexWrap="wrap">
             {actionsFor(card).map(a => (

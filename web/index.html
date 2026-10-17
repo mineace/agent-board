@@ -232,7 +232,7 @@ function renderDetail() {
     <div class="row" style="justify-content:space-between;align-items:start">
       <h3>#${c.id} ${esc(c.title)}</h3><button data-close>Close</button>
     </div>
-    <div class="muted">${esc(STAGE_NAMES[c.stage])} · ${c.agentId ? '<span class="dot"></span>' : ''}${esc(c.status)}${c.tokens ? ` · ${fmtTokens(c.tokens)} tokens` : ''}</div>
+    <div class="muted">${esc(STAGE_NAMES[c.stage])} · ${c.agentId ? '<span class="dot"></span>' : ''}${esc(c.status)}${c.tokens ? ` · ${fmtTokens(c.tokens)} tokens` : ''}${c.cached ? ` (+${fmtTokens(c.cached)} cached reads)` : ''}</div>
     <div class="row" style="justify-content:flex-start">${acts.map(a =>
       `<button data-act="${a}" class="${a === 'approve' || a === 'start' || a === 'retry' || a === 'merge' ? 'primary' : a === 'delete' || a === 'discard' ? 'danger' : ''}">${LABELS[a]}</button>`).join('')}</div>
     <div class="models">${ROLES.map(([role, name]) => `<label>${name}

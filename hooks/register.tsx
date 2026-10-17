@@ -48,6 +48,8 @@ type Ctx = {
   isPumping: boolean
   isPaused: boolean
   web: { port: number; host: string; extraHosts: string; url?: string; problem?: string }
+  /** Set by /clear (a usage-pacer handoff runs one): reload the board from its file before using it. */
+  needsLoad: boolean
   /** Cards each running agent has suggested, by agent id: three at most. */
   suggested: Map<string, number>
 }
@@ -61,13 +63,13 @@ const viewFileOf = (ctx: Ctx) => `${ctx.cwd}/.claude/board-view.json`
 /** Writes what the browser page shows beside the cards. */
 async function publish($: EngineInterface, ctx: Ctx, board?: Board) {
   if (!ctx.web.port) return
-  const b = board ?? (await read($, boardAtom))
+  const b = board ?? (await current($, ctx))
   const project = ctx.cwd.split('/').filter(Boolean).pop() ?? ''
   await $.fs.write(viewFileOf(ctx), `${JSON.stringify(boardView(b, ctx.settings, ctx.isPaused, project))}\n`)
 }
 
 async function save($: EngineInterface, ctx: Ctx, fn: (board: Board) => Board) {
-  const before = await read($, boardAtom)
+  const before = await current($, ctx)
   const board = fn(before)
   await update($, boardAtom, () => board)
   try {
@@ -183,6 +185,18 @@ async function closeBranch($: EngineInterface, ctx: Ctx, card: Card, how: 'merge
   $.ui.toast(`Card #${card.id}: ${wt.branch} ${how === 'merge' ? `merged into ${repo}` : 'discarded'}.`)
 }
 
+/**
+ * The board, reloaded from its file first after a /clear: session.start does not fire then, and a
+ * save from an empty board would overwrite the cards on disk.
+ */
+async function current($: EngineInterface, ctx: Ctx) {
+  if (ctx.needsLoad) {
+    ctx.needsLoad = false
+    return load($, ctx)
+  }
+  return read($, boardAtom)
+}
+
 async function load($: EngineInterface, ctx: Ctx) {
   let text: string | undefined
   try {
@@ -223,10 +237,10 @@ async function pump($: EngineInterface, ctx: Ctx) {
   try {
     const hit = await limitHit($, ctx)
     const wasPaused = ctx.isPaused
-    ctx.isPaused = hit !== undefined && waiting(await read($, boardAtom)).length > 0
+    ctx.isPaused = hit !== undefined && waiting(await current($, ctx)).length > 0
     if (ctx.isPaused !== wasPaused) await publish($, ctx)
     if (hit) return
-    for (const card of toStart(await read($, boardAtom), ctx.settings.maxParallel)) {
+    for (const card of toStart(await current($, ctx), ctx.settings.maxParallel)) {
       const role = ROLE_OF[card.stage]
       if (!role) continue
       const model = modelFor(card, role, ctx.settings)
@@ -272,7 +286,7 @@ async function create($: EngineInterface, ctx: Ctx, text: string, source?: strin
 }
 
 async function press($: EngineInterface, ctx: Ctx, id: number, action: Action) {
-  const card = find(await read($, boardAtom), id)
+  const card = find(await current($, ctx), id)
   if (card && (action === 'merge' || action === 'discard')) return closeBranch($, ctx, card, action)
   // A deleted card's worktree folder goes; its branch stays, so the work can still be found.
   if (card?.worktree && action === 'delete') await git($, card.worktree.repo ?? ctx.cwd, ['worktree', 'remove', '--force', card.worktree.path])
@@ -319,7 +333,7 @@ async function openBoard($: EngineInterface, view: View) {
 async function applyWeb($: EngineInterface, ctx: Ctx, a: WebAction) {
   if (a.op === 'add') return void (await create($, ctx, a.text))
   if (a.op === 'setting') return setSetting($, ctx, a.field, a.value)
-  const card = find(await read($, boardAtom), a.id)
+  const card = find(await current($, ctx), a.id)
   if (!card) return
   if (a.op === 'model') return setCardModel($, ctx, a.id, a.role, a.model)
   // Only what the card offers now: a page a moment behind cannot skip a step.
@@ -362,7 +376,9 @@ async function serve($: EngineInterface, ctx: Ctx) {
 }
 
 const webLine = (ctx: Ctx) =>
-  ctx.web.url ? `Browser board: ${ctx.web.url}` : ctx.web.problem ? `Browser board off: ${ctx.web.problem}` : ''
+  ctx.web.url
+    ? `Browser board: ${[ctx.web.url, ...ctx.web.extraHosts.split(',').map(h => h.trim()).filter(Boolean).map(h => `https://${h}`)].join(' or ')}`
+    : ctx.web.problem ? `Browser board off: ${ctx.web.problem}` : ''
 
 const asModel = (v: unknown): Model => (MODELS.includes(v as Model) ? (v as Model) : 'inherit')
 
@@ -372,6 +388,7 @@ export const register: Register = (on, options) => {
     isPumping: false,
     isPaused: false,
     suggested: new Map(),
+    needsLoad: false,
     web: { port: Math.max(0, Math.floor(Number(options.webPort ?? 4848))), host: String(options.webHost ?? '127.0.0.1'), extraHosts: String(options.webExtraHosts ?? '') },
     settings: {
       maxParallel: Math.max(1, Number(options.maxParallel ?? 1)),
@@ -462,7 +479,7 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: /^mcp__agent-board__suggest_card$/ }, async ($, e) => {
     const text = String((e as { text?: unknown }).text ?? '').trim()
     if (!text) return { result: 'No card suggested: the text is empty.' }
-    const from = e.agentId ? (await read($, boardAtom)).cards.find(c => c.agentId === e.agentId) : undefined
+    const from = e.agentId ? (await current($, ctx)).cards.find(c => c.agentId === e.agentId) : undefined
     const role = from ? ROLE_OF[from.stage] : undefined
     const key = e.agentId ?? 'main'
     const count = ctx.suggested.get(key) ?? 0
@@ -483,7 +500,7 @@ export const register: Register = (on, options) => {
       return { ...verdict, decision: 'allow', reason: 'agent-board starts its own agent' }
     }
     if (!e.agentId) return verdict
-    const card = (await read($, boardAtom)).cards.find(c => c.agentId === e.agentId)
+    const card = (await current($, ctx)).cards.find(c => c.agentId === e.agentId)
     const role = card ? ROLE_OF[card.stage] : undefined
     if (!card || !role) return verdict
     const root = role !== 'plan' && card.worktree ? card.worktree.path : ctx.cwd
@@ -492,20 +509,20 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: /^mcp__agent-board__board_status$/ }, async $ => ({
-    result: summary(await read($, boardAtom)),
+    result: summary(await current($, ctx)),
   })).catch(() => ({ result: 'The board could not be read.' }))
 
   // With usage-pacer: a handoff carries the board, so the fresh agent knows what is in flight.
   on('tool.call', { tool: /^mcp__usage-pacer__handoff$/ }, async ($, e, next) => {
     const given = String((e as { summary?: unknown }).summary ?? '')
-    return next({ ...e, summary: `${given}\n\n${summary(await read($, boardAtom))}` } as typeof e)
+    return next({ ...e, summary: `${given}\n\n${summary(await current($, ctx))}` } as typeof e)
   }).catch(($, e, next) => next(e))
 
   // A card's agent ended: record its answer and move the card on.
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
     if (!e.agentId) return done
-    const card = (await read($, boardAtom)).cards.find(c => c.agentId === e.agentId)
+    const card = (await current($, ctx)).cards.find(c => c.agentId === e.agentId)
     if (!card) return done
     const now = await $.clock.now()
     const u = e.usage
@@ -521,6 +538,11 @@ export const register: Register = (on, options) => {
     return done
   }).catch(($, e, next) => next(e))
 
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') ctx.needsLoad = true
+    return next(e)
+  })
+
   // Plan usage moved: a paused board may go on.
   on('session.measure', async ($, e, next) => {
     if (ctx.isPaused && e.changed.includes('rateLimits')) void pump($, ctx)
@@ -528,7 +550,7 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const board = await read($, boardAtom)
+    const board = await current($, ctx)
     const busy = running(board)
     const queued = waiting(board).length
     const needYou = board.cards.filter(c => c.status.startsWith('Needs you')).length
@@ -553,7 +575,7 @@ export const register: Register = (on, options) => {
     // Not every surface has form elements; there the board still shows and /card adds cards.
     const Input = 'Input' in ui ? ui.Input : undefined
     const Select = 'Select' in ui ? ui.Select : undefined
-    const board = await read($, boardAtom)
+    const board = await current($, ctx)
     const view = await read($, viewAtom)
     // A surface that reports no width gets a stacked board.
     const width = e.props.bodyColumns > 0 ? e.props.bodyColumns : 80

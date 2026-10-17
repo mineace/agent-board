@@ -114,3 +114,19 @@ test('the allowlist is off unless turned on', async ($, on) => {
   const v = await $.tool.check({ tool: 'Agent', input: { subagent_type: 'agent-board:planner' } } as never)
   expect(v.decision).toBe('ask')
 })
+
+test('after a /clear the board reloads its cards from the file before saving', async ($, on) => {
+  const w = world(on)
+  on('session.end', () => ({ sessionId: 's1' }) as never)
+  await $.session.start({ cwd: '/proj' } as never)
+  await $.tool.call({ tool: 'mcp__agent-board__suggest_card', text: 'Kept card' } as never)
+  // Another copy wrote a second card while this one was cleared.
+  const saved = JSON.parse(w.files[BOARD] ?? '{}')
+  saved.cards.push({ ...saved.cards[0], id: 2, title: 'From the file' })
+  saved.nextId = 3
+  w.files[BOARD] = JSON.stringify(saved)
+  await $.session.end({ reason: 'clear' } as never)
+  await $.tool.call({ tool: 'mcp__agent-board__suggest_card', text: 'After clear' } as never)
+  await settle()
+  expect(board(w).cards.map(c => c.id)).toEqual([1, 2, 3])
+})

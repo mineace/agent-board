@@ -8,10 +8,16 @@ export type Card = {
   id: number
   title: string
   request: string
+  /** Who suggested it, when a board agent did ("the executor on #4"). */
+  source?: string
   stage: Stage
   /** Model per role; absent means the board's setting. */
   models: Partial<Record<Role, Model>>
   plan?: string
+  /** The plan's acceptance criteria, one line each: what the reviewer checks. */
+  criteria?: string[]
+  /** The git worktree the executor and reviewer work in, while the card has one. */
+  worktree?: Worktree
   result?: string
   review?: string
   /** What the card is doing or waiting for, one line. */
@@ -24,6 +30,13 @@ export type Card = {
   createdAt: number
   updatedAt: number
   log: { at: number; text: string }[]
+}
+
+export type Worktree = {
+  path: string
+  branch: string
+  /** The commit it branched from: the reviewer diffs from here. */
+  base: string
 }
 
 export type Board = { nextId: number; cards: Card[] }

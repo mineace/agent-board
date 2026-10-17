@@ -1,6 +1,6 @@
 {
   "name": "agent-board",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A kanban board in Claude Code: cards run through planner, executor and reviewer agents, each in its own context, with an approval step after planning.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -69,6 +69,24 @@
       "title": "Browser board address",
       "description": "Where the browser board listens. 127.0.0.1 keeps it to this machine (WSL included); 0.0.0.0 opens it to your network.",
       "default": "127.0.0.1"
+    },
+    "worktrees": {
+      "type": "boolean",
+      "title": "A git branch per card",
+      "description": "The executor and reviewer work in a git worktree of their own (branch board/card-N); you merge or discard it when the card is done. Off: they work directly in the project.",
+      "default": true
+    },
+    "notify": {
+      "type": "boolean",
+      "title": "Notify when a card needs you",
+      "description": "A desktop notification when a plan waits for approval, an agent stops, or a branch is ready to merge.",
+      "default": true
+    },
+    "allowlist": {
+      "type": "boolean",
+      "title": "Agents run safe commands without asking",
+      "description": "Each board agent runs its role's allowlisted commands (see hooks/allowlist.ts) without a permission prompt, and in auto mode without auto mode's check; the board also approves starting its own agents. Anything else still asks. Off by default.",
+      "default": false
     }
   }
 }

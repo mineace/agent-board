@@ -91,3 +91,26 @@ test('webPort 0 starts no server', { options: { webPort: 0 } }, async ($, on) =>
   await settle()
   expect(w.argv).toBe(undefined)
 })
+
+test('suggested cards wait in Backlog, three per run at most', async ($, on) => {
+  const w = world(on)
+  await $.session.start({ cwd: '/proj' } as never)
+  const said: string[] = []
+  for (let i = 1; i <= 4; i++) {
+    const r = await $.tool.call({ tool: 'mcp__agent-board__suggest_card', text: `Follow-up ${i}` } as never)
+    said.push(String((r as { result?: unknown }).result))
+  }
+  await settle()
+  expect(board(w).cards.map(c => c.stage)).toEqual(['backlog', 'backlog', 'backlog'])
+  expect(board(w).cards[0]?.status).toBe('Suggested by Claude')
+  expect(said[3]).toContain('limit')
+  expect(w.spawned).toHaveLength(0)
+})
+
+test('the allowlist is off unless turned on', async ($, on) => {
+  world(on)
+  on('tool.check', () => ({ decision: 'ask' }) as never)
+  await $.session.start({ cwd: '/proj' } as never)
+  const v = await $.tool.check({ tool: 'Agent', input: { subagent_type: 'agent-board:planner' } } as never)
+  expect(v.decision).toBe('ask')
+})

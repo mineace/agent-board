@@ -113,6 +113,9 @@
     <label class="field"><span>Cards running at once<small>Agents working at the same time.</small></span><input type="number" min="1" max="8" name="maxParallel"></label>
     <label class="field"><span>Plan new cards automatically<small>Off: new cards wait in Backlog.</small></span><input type="checkbox" name="autoStart"></label>
     <label class="field"><span>Pause at plan usage %<small>Start no agent past this. 0 = never pause.</small></span><input type="number" min="0" max="100" name="pauseAtLimit"></label>
+    <label class="field"><span>A git branch per card<small>Executors work on board/card-N; you merge when done.</small></span><input type="checkbox" name="worktrees"></label>
+    <label class="field"><span>Notify when a card needs you<small>A desktop notification.</small></span><input type="checkbox" name="notify"></label>
+    <label class="field"><span>Agents run safe commands without asking<small>Each role's allowlist skips the prompt and auto mode's check. Off by default.</small></span><input type="checkbox" name="allowlist"></label>
     <label class="field"><span>Planner model</span><select name="planModel"></select></label>
     <label class="field"><span>Executor model</span><select name="executeModel"></select></label>
     <label class="field"><span>Reviewer model</span><select name="reviewModel"></select></label>
@@ -124,7 +127,7 @@
 const TOKEN = '__BOARD_TOKEN__'
 const STAGES = ['backlog', 'plan', 'approve', 'execute', 'review', 'done']
 const STAGE_NAMES = { backlog: 'Backlog', plan: 'Plan', approve: 'Approve', execute: 'Execute', review: 'Review', done: 'Done' }
-const LABELS = { start: 'Start', approve: 'Approve plan', replan: 'Re-plan', retry: 'Retry', done: 'Mark done', delete: 'Delete', reopen: 'Reopen' }
+const LABELS = { start: 'Start', approve: 'Approve plan', replan: 'Re-plan', retry: 'Retry', done: 'Mark done', delete: 'Delete', reopen: 'Reopen', merge: 'Merge branch', discard: 'Discard branch' }
 const MODELS = ['inherit', 'opus', 'sonnet', 'haiku']
 const MODEL_NAMES = { inherit: 'Same as session', opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku' }
 const ROLES = [['plan', 'Planner'], ['execute', 'Executor'], ['review', 'Reviewer']]
@@ -220,10 +223,12 @@ function renderDetail() {
     </div>
     <div class="muted">${esc(STAGE_NAMES[c.stage])} · ${c.agentId ? '<span class="dot"></span>' : ''}${esc(c.status)}${c.tokens ? ` · ${fmtTokens(c.tokens)} tokens` : ''}</div>
     <div class="row" style="justify-content:flex-start">${acts.map(a =>
-      `<button data-act="${a}" class="${a === 'approve' || a === 'start' || a === 'retry' ? 'primary' : a === 'delete' ? 'danger' : ''}">${LABELS[a]}</button>`).join('')}</div>
+      `<button data-act="${a}" class="${a === 'approve' || a === 'start' || a === 'retry' || a === 'merge' ? 'primary' : a === 'delete' || a === 'discard' ? 'danger' : ''}">${LABELS[a]}</button>`).join('')}</div>
     <div class="models">${ROLES.map(([role, name]) => `<label>${name}
       <select data-role="${role}">${MODELS.map(m => `<option value="${m}" ${(c.models?.[role] ?? defaults[role] ?? 'inherit') === m ? 'selected' : ''}>${MODEL_NAMES[m]}</option>`).join('')}</select></label>`).join('')}</div>
-    ${section('Request', c.request)}${section('Plan', c.plan)}${section('Work summary', c.result)}${section('Review', c.review)}
+    ${c.source ? `<div class="muted">Suggested by ${esc(c.source)}</div>` : ''}
+    ${c.worktree ? `<div class="muted">Branch <code>${esc(c.worktree.branch)}</code> · ${esc(c.worktree.path)}</div>` : ''}
+    ${section('Request', c.request)}${section('Plan', c.plan)}${c.criteria?.length ? section('Acceptance criteria', c.criteria.map(x => `- ${x}`).join('\n')) : ''}${section('Work summary', c.result)}${section('Review', c.review)}
     <section><h4>History</h4><div class="log">${(c.log ?? []).slice().reverse().map(l =>
       `<div>${new Date(l.at).toLocaleString()} — ${esc(l.text)}</div>`).join('')}</div></section>`
 }
@@ -334,6 +339,9 @@ $('settingsBtn').onclick = () => {
   settingsForm.elements.maxParallel.value = s.maxParallel ?? 1
   settingsForm.elements.autoStart.checked = s.autoStart !== false
   settingsForm.elements.pauseAtLimit.value = s.pauseAtLimit ?? 90
+  settingsForm.elements.worktrees.checked = s.worktrees !== false
+  settingsForm.elements.notify.checked = s.notify !== false
+  settingsForm.elements.allowlist.checked = s.allowlist === true
   settingsForm.elements.planModel.value = s.models?.plan ?? 'inherit'
   settingsForm.elements.executeModel.value = s.models?.execute ?? 'inherit'
   settingsForm.elements.reviewModel.value = s.models?.review ?? 'inherit'
@@ -347,9 +355,10 @@ $('settingsDlg').addEventListener('close', () => {
     maxParallel: Math.max(1, Math.min(8, Number(f.maxParallel.value) || 1)),
     autoStart: f.autoStart.checked,
     pauseAtLimit: Math.max(0, Math.min(100, Number(f.pauseAtLimit.value) || 0)),
+    worktrees: f.worktrees.checked, notify: f.notify.checked, allowlist: f.allowlist.checked,
     planModel: f.planModel.value, executeModel: f.executeModel.value, reviewModel: f.reviewModel.value,
   }
-  const was = { maxParallel: s.maxParallel, autoStart: s.autoStart, pauseAtLimit: s.pauseAtLimit,
+  const was = { maxParallel: s.maxParallel, autoStart: s.autoStart, pauseAtLimit: s.pauseAtLimit, worktrees: s.worktrees, notify: s.notify, allowlist: s.allowlist,
     planModel: s.models?.plan, executeModel: s.models?.execute, reviewModel: s.models?.review }
   for (const [field, value] of Object.entries(next)) if (was[field] !== value) send({ op: 'setting', field, value })
 })

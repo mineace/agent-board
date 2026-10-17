@@ -13,11 +13,14 @@ import {
   actionsFor,
   addCard,
   boardView,
+  branchClosed,
   failed,
   find,
   finished,
   fmtTokens,
+  gitFailed,
   modelFor,
+  needsYou,
   orphaned,
   parseWebAction,
   readBoard,
@@ -26,9 +29,11 @@ import {
   summary,
   toStart,
   waiting,
+  withWorktree,
   writeBoard,
 } from './board'
 import type { Action, Settings, WebAction } from './board'
+import { isAllowedCall } from './allowlist'
 import { AGENTS, taskFor } from './prompts'
 
 const PLUGIN = 'agent-board'
@@ -43,7 +48,12 @@ type Ctx = {
   isPumping: boolean
   isPaused: boolean
   web: { port: number; host: string; url?: string; problem?: string }
+  /** Cards each running agent has suggested, by agent id: three at most. */
+  suggested: Map<string, number>
 }
+
+const MAX_SUGGESTIONS = 3
+const ROLE_NAMES: Record<Role, string> = { plan: 'planner', execute: 'executor', review: 'reviewer' }
 
 const fileOf = (ctx: Ctx) => `${ctx.cwd}/.claude/board.json`
 const viewFileOf = (ctx: Ctx) => `${ctx.cwd}/.claude/board-view.json`
@@ -57,11 +67,111 @@ async function publish($: EngineInterface, ctx: Ctx, board?: Board) {
 }
 
 async function save($: EngineInterface, ctx: Ctx, fn: (board: Board) => Board) {
-  const board = fn(await read($, boardAtom))
+  const before = await read($, boardAtom)
+  const board = fn(before)
   await update($, boardAtom, () => board)
-  await $.fs.write(fileOf(ctx), writeBoard(board))
+  try {
+    await $.fs.write(fileOf(ctx), writeBoard(board))
+  } catch (err) {
+    // The cards live on in this session; say so rather than lose them quietly on the next reload.
+    $.ui.toast(`Agent board could not save ${fileOf(ctx)}: ${err instanceof Error ? err.message : String(err)}`)
+  }
   await publish($, ctx, board)
+  for (const c of board.cards) {
+    const was = find(before, c.id)
+    if (needsYou(c) && was?.status !== c.status) void announce($, ctx, `#${c.id} ${c.title}: ${c.status.replace('Needs you: ', '')}`)
+  }
   return board
+}
+
+/** A card needs you: a toast here, and a desktop notification unless turned off. */
+async function announce($: EngineInterface, ctx: Ctx, text: string) {
+  $.ui.toast(`Card ${text}`)
+  if (ctx.settings.notify) await $.ui.notify(text, { title: 'Agent board: needs you' }).catch(() => undefined)
+}
+
+/** Runs git; never throws (a missing git reads as a failure). */
+async function git($: EngineInterface, cwd: string, args: string[]) {
+  try {
+    const r = await $.process.run(['git', ...args], { cwd, timeoutMs: 120_000 })
+    return { ok: r.exitCode === 0, out: r.stdout.trim(), err: (r.stderr || r.stdout).trim().split('\n').slice(-3).join(' ') }
+  } catch (err) {
+    return { ok: false, out: '', err: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Gives the card a worktree of its own (.claude/worktrees/card-N on branch board/card-N) before
+ * its executor starts. Not a git repository, or git failing: the card works in the project.
+ */
+async function ensureWorktree($: EngineInterface, ctx: Ctx, card: Card) {
+  if (!ctx.settings.worktrees || card.worktree) return card.worktree
+  const top = await git($, ctx.cwd, ['rev-parse', '--show-toplevel'])
+  const base = await git($, ctx.cwd, ['rev-parse', 'HEAD'])
+  const now = await $.clock.now()
+  if (!top.ok || !base.ok) {
+    await save($, ctx, b => update1(b, card.id, now, 'No worktree: not a git repository with a commit; working in the project'))
+    return undefined
+  }
+  const path = `${top.out}/.claude/worktrees/card-${card.id}`
+  const branch = `board/card-${card.id}`
+  await excludeWorktrees($, top.out)
+  const exists = (await git($, top.out, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])).ok
+  const made = await git($, top.out, exists ? ['worktree', 'add', path, branch] : ['worktree', 'add', '-b', branch, path, base.out])
+  if (!made.ok) {
+    await save($, ctx, b => update1(b, card.id, now, `No worktree (${made.err}); working in the project`))
+    return undefined
+  }
+  const worktree = { path, branch, base: base.out }
+  await save($, ctx, b => withWorktree(b, card.id, worktree, now))
+  return worktree
+}
+
+const update1 = (b: Board, id: number, now: number, note: string): Board => ({
+  ...b,
+  cards: b.cards.map(c => (c.id === id ? { ...c, updatedAt: now, log: [...c.log, { at: now, text: note }].slice(-50) } : c)),
+})
+
+/** Keeps the worktrees out of the project's own git status. */
+async function excludeWorktrees($: EngineInterface, top: string) {
+  const dir = await git($, top, ['rev-parse', '--git-common-dir'])
+  if (!dir.ok) return
+  const file = `${dir.out.startsWith('/') ? dir.out : `${top}/${dir.out}`}/info/exclude`
+  let text = ''
+  try {
+    text = String(await $.fs.read(file))
+  } catch {
+    text = ''
+  }
+  if (!text.split('\n').includes('.claude/worktrees/')) await $.fs.write(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}.claude/worktrees/\n`)
+}
+
+/** Commits what the executor left uncommitted, so the reviewer and the merge see all of it. */
+async function commitWork($: EngineInterface, card: Card) {
+  if (!card.worktree) return
+  const dirty = await git($, card.worktree.path, ['status', '--porcelain'])
+  if (!dirty.ok || !dirty.out) return
+  await git($, card.worktree.path, ['add', '-A'])
+  await git($, card.worktree.path, ['commit', '-m', `Card #${card.id}: ${card.title}`])
+}
+
+/** Merge or discard a card's branch, then remove its worktree. */
+async function closeBranch($: EngineInterface, ctx: Ctx, card: Card, how: 'merge' | 'discard') {
+  const wt = card.worktree
+  if (!wt) return
+  const now = await $.clock.now()
+  if (how === 'merge') {
+    await commitWork($, card)
+    const merged = await git($, ctx.cwd, ['merge', '--no-ff', '--no-edit', wt.branch])
+    if (!merged.ok) {
+      await git($, ctx.cwd, ['merge', '--abort'])
+      await save($, ctx, b => gitFailed(b, card.id, `merge of ${wt.branch} failed (${merged.err}); the branch is kept`, now))
+      return
+    }
+  }
+  await git($, ctx.cwd, ['worktree', 'remove', '--force', wt.path])
+  await git($, ctx.cwd, ['branch', how === 'merge' ? '-d' : '-D', wt.branch])
+  await save($, ctx, b => branchClosed(b, card.id, how === 'merge' ? 'merged' : 'discarded', now))
 }
 
 async function load($: EngineInterface, ctx: Ctx) {
@@ -71,12 +181,20 @@ async function load($: EngineInterface, ctx: Ctx) {
   } catch {
     text = undefined
   }
-  const board = orphaned(readBoard(text), await $.clock.now())
+  const held = await read($, boardAtom)
+  const fromFile = readBoard(text)
+  // A reload re-reads the file; when it is missing or unreadable, the cards held in memory win.
+  const isFileLost = text === undefined || (fromFile.cards.length === 0 && text.trim() !== '' && !text.includes('"cards"'))
+  const base = isFileLost && held.cards.length ? held : fromFile
+  const board = orphaned(base, await $.clock.now())
   await update($, boardAtom, () => board)
+  if (base === held) await $.fs.write(fileOf(ctx), writeBoard(board)).catch(() => undefined)
   return board
 }
 
 /** Plan usage too high to start an agent: the highest window at or past the pause level. */
+const NO_VERDICT = /gave no verdict/i
+
 async function limitHit($: EngineInterface, ctx: Ctx) {
   if (ctx.settings.pauseAtLimit <= 0) return undefined
   const { rateLimits } = await $.session.usage()
@@ -97,15 +215,25 @@ async function pump($: EngineInterface, ctx: Ctx) {
       const role = ROLE_OF[card.stage]
       if (!role) continue
       const model = modelFor(card, role, ctx.settings)
-      const spawned = await $.agent.spawn({
-        prompt: taskFor(card, role),
-        description: `#${card.id} ${STAGE_NAMES[card.stage]}: ${card.title}`.slice(0, 60),
-        subagentType: `${PLUGIN}:${AGENTS[role].name}`,
-        ...(model === 'inherit' ? {} : { model }),
-      })
+      const worktree = role === 'execute' ? await ensureWorktree($, ctx, card) : card.worktree
+      const task = taskFor({ ...card, worktree }, role)
+      const spawn = () =>
+        $.agent.spawn({
+          prompt: task,
+          description: `#${card.id} ${STAGE_NAMES[card.stage]}: ${card.title}`.slice(0, 60),
+          subagentType: `${PLUGIN}:${AGENTS[role].name}`,
+          ...(model === 'inherit' ? {} : { model }),
+          ...(worktree && role !== 'plan' ? { cwd: worktree.path } : {}),
+        })
+      let spawned = await spawn()
+      // Auto mode's classifier can return no verdict for a spawn no prompt asked for; it says to try once more.
+      if (spawned.deny !== undefined && NO_VERDICT.test(spawned.deny)) spawned = await spawn()
       const now = await $.clock.now()
       if (spawned.deny !== undefined || !spawned.agentId) {
-        await save($, ctx, b => failed(b, card.id, spawned.deny ?? 'the agent did not start', now))
+        const why = spawned.deny !== undefined && NO_VERDICT.test(spawned.deny)
+          ? 'auto mode could not evaluate the agent start; press Retry, leave auto mode, or turn on the agents’ safe commands in Settings'
+          : (spawned.deny ?? 'the agent did not start')
+        await save($, ctx, b => failed(b, card.id, why, now))
       } else {
         const agentId = spawned.agentId
         await save($, ctx, b => started(b, card.id, agentId, now))
@@ -116,11 +244,11 @@ async function pump($: EngineInterface, ctx: Ctx) {
   }
 }
 
-async function create($: EngineInterface, ctx: Ctx, text: string) {
+async function create($: EngineInterface, ctx: Ctx, text: string, source?: string) {
   const now = await $.clock.now()
   let made: Card | undefined
   await save($, ctx, b => {
-    const [next, card] = addCard(b, text, now, ctx.settings.autoStart)
+    const [next, card] = addCard(b, text, now, ctx.settings.autoStart, source)
     made = card
     return next
   })
@@ -129,6 +257,10 @@ async function create($: EngineInterface, ctx: Ctx, text: string) {
 }
 
 async function press($: EngineInterface, ctx: Ctx, id: number, action: Action) {
+  const card = find(await read($, boardAtom), id)
+  if (card && (action === 'merge' || action === 'discard')) return closeBranch($, ctx, card, action)
+  // A deleted card's worktree folder goes; its branch stays, so the work can still be found.
+  if (card?.worktree && action === 'delete') await git($, ctx.cwd, ['worktree', 'remove', '--force', card.worktree.path])
   const now = await $.clock.now()
   await save($, ctx, b => act(b, id, action, now))
   if (action === 'delete') await update($, viewAtom, () => ({ tab: 'board' }))
@@ -156,6 +288,9 @@ async function setSetting($: EngineInterface, ctx: Ctx, field: string, value: nu
   if (field === 'planModel') s.models.plan = value as Model
   if (field === 'executeModel') s.models.execute = value as Model
   if (field === 'reviewModel') s.models.review = value as Model
+  if (field === 'worktrees') s.worktrees = Boolean(value)
+  if (field === 'notify') s.notify = Boolean(value)
+  if (field === 'allowlist') s.allowlist = Boolean(value)
   await publish($, ctx)
   void pump($, ctx)
 }
@@ -221,11 +356,15 @@ export const register: Register = (on, options) => {
     cwd: '.',
     isPumping: false,
     isPaused: false,
+    suggested: new Map(),
     web: { port: Math.max(0, Math.floor(Number(options.webPort ?? 4848))), host: String(options.webHost ?? '127.0.0.1') },
     settings: {
       maxParallel: Math.max(1, Number(options.maxParallel ?? 1)),
       autoStart: options.autoStart !== false,
       pauseAtLimit: Number(options.pauseAtLimit ?? 90),
+      worktrees: options.worktrees !== false,
+      notify: options.notify !== false,
+      allowlist: options.allowlist === true,
       models: {
         plan: asModel(options.planModel),
         execute: asModel(options.executeModel),
@@ -255,6 +394,15 @@ export const register: Register = (on, options) => {
         'Adds a card to the user’s agent board, where a planner, an executor and a reviewer agent work it in ' +
         'their own contexts (the user approves each plan). Use it when the user asks to add something to the ' +
         'board or to queue work as a card. The first line of text is the title; the rest is the request.',
+      inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+      isDeferred: false,
+    })
+    await $.tool.register({
+      name: 'suggest_card',
+      description:
+        'Suggests a card for the user’s agent board: it waits in Backlog, labelled with who suggested it, ' +
+        'until the user starts it. Board agents use it for work they notice outside their own card. The first ' +
+        'line of text is the title; the rest is the request.',
       inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
       isDeferred: false,
     })
@@ -296,6 +444,38 @@ export const register: Register = (on, options) => {
     return { result: card ? `Card #${card.id} added in ${STAGE_NAMES[card.stage]}: ${card.title}` : 'No card added.' }
   }).catch(() => ({ result: 'Could not add the card.' }))
 
+  on('tool.call', { tool: /^mcp__agent-board__suggest_card$/ }, async ($, e) => {
+    const text = String((e as { text?: unknown }).text ?? '').trim()
+    if (!text) return { result: 'No card suggested: the text is empty.' }
+    const from = e.agentId ? (await read($, boardAtom)).cards.find(c => c.agentId === e.agentId) : undefined
+    const role = from ? ROLE_OF[from.stage] : undefined
+    const key = e.agentId ?? 'main'
+    const count = ctx.suggested.get(key) ?? 0
+    if (count >= MAX_SUGGESTIONS) return { result: `No card added: ${MAX_SUGGESTIONS} suggestions is the limit for one run.` }
+    ctx.suggested.set(key, count + 1)
+    const card = await create($, ctx, text, from && role ? `the ${ROLE_NAMES[role]} on #${from.id}` : 'Claude')
+    return { result: card ? `Card #${card.id} suggested; it waits in Backlog for the user: ${card.title}` : 'No card added.' }
+  }).catch(() => ({ result: 'Could not suggest the card.' }))
+
+  // The board's own agents run what their role's allowlist holds without a prompt or auto mode's
+  // check; anything else keeps the session's own decision, so it still asks.
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
+    // Off unless the person turned it on: installing the board never skips a check by itself.
+    if (!ctx.settings.allowlist || verdict.decision !== 'ask') return verdict
+    const input = (e.input ?? {}) as Record<string, unknown>
+    if (e.tool === 'Agent' && next.origin.plugin === PLUGIN && String(input.subagent_type ?? '').startsWith(`${PLUGIN}:`)) {
+      return { ...verdict, decision: 'allow', reason: 'agent-board starts its own agent' }
+    }
+    if (!e.agentId) return verdict
+    const card = (await read($, boardAtom)).cards.find(c => c.agentId === e.agentId)
+    const role = card ? ROLE_OF[card.stage] : undefined
+    if (!card || !role) return verdict
+    const root = role !== 'plan' && card.worktree ? card.worktree.path : ctx.cwd
+    if (!isAllowedCall(role, e.tool, e.input, root)) return verdict
+    return { ...verdict, decision: 'allow', reason: `agent-board: on the ${ROLE_NAMES[role]}'s allowlist` }
+  }).catch(($, e, next) => next(e))
+
   on('tool.call', { tool: /^mcp__agent-board__board_status$/ }, async $ => ({
     result: summary(await read($, boardAtom)),
   })).catch(() => ({ result: 'The board could not be read.' }))
@@ -315,11 +495,11 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     const u = e.usage
     const tokens = u ? u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens : 0
+    ctx.suggested.delete(e.agentId)
+    if (card.stage === 'execute' && e.reason === 'answer') await commitWork($, card)
     await save($, ctx, b =>
       e.reason === 'answer' && e.answer.trim() ? finished(b, card.id, e.answer, tokens, now) : failed(b, card.id, e.reason, now),
     )
-    const after = find(await read($, boardAtom), card.id)
-    if (after?.status.startsWith('Needs you')) $.ui.toast(`Card #${card.id}: ${after.status.replace('Needs you: ', '')}`)
     void pump($, ctx)
     return done
   }).catch(($, e, next) => next(e))
@@ -423,6 +603,36 @@ export const register: Register = (on, options) => {
             onSelect={(v: string) => void setSetting($, ctx, 'autoStart', v === 'on')}
           />
           <Select
+            key="set-worktrees"
+            label="Where executors work"
+            value={s.worktrees ? 'on' : 'off'}
+            options={[
+              { value: 'on', label: 'A git branch per card (merge when done)' },
+              { value: 'off', label: 'Directly in the project' },
+            ]}
+            onSelect={(v: string) => void setSetting($, ctx, 'worktrees', v === 'on')}
+          />
+          <Select
+            key="set-notify"
+            label="When a card needs you"
+            value={s.notify ? 'on' : 'off'}
+            options={[
+              { value: 'on', label: 'Desktop notification' },
+              { value: 'off', label: 'Only show it here' },
+            ]}
+            onSelect={(v: string) => void setSetting($, ctx, 'notify', v === 'on')}
+          />
+          <Select
+            key="set-allowlist"
+            label="Agents' safe commands"
+            value={s.allowlist ? 'on' : 'off'}
+            options={[
+              { value: 'off', label: 'Ask as usual' },
+              { value: 'on', label: 'Run without asking (skips auto mode’s check)' },
+            ]}
+            onSelect={(v: string) => void setSetting($, ctx, 'allowlist', v === 'on')}
+          />
+          <Select
             key="set-pause"
             label="Pause new agents at plan usage"
             value={String(s.pauseAtLimit)}
@@ -468,8 +678,11 @@ export const register: Register = (on, options) => {
               />
             ))}
           </Box>
+          {card.source && <Text dimColor>Suggested by {card.source}</Text>}
+          {card.worktree && <Text dimColor>Branch {card.worktree.branch} · {card.worktree.path}</Text>}
           {block('Request', card.request)}
           {block('Plan', card.plan)}
+          {block('Acceptance criteria', card.criteria?.length ? card.criteria.map(c => `• ${c}`).join('\n') : undefined)}
           {block('Work summary', card.result)}
           {block('Review', card.review)}
           <Box flexDirection="column">

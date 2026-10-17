@@ -51,6 +51,16 @@ export const parseCriteria = (plan: string): string[] => {
   return items.slice(0, 30)
 }
 
+/** The plan's `Repository: /abs/path` line, when the work belongs in another repository. */
+export const parseRepo = (plan: string) => plan.match(/^\W*repository\W*:\s*`?(\/[^\s`]+)`?\s*$/im)?.[1]?.replace(/\/$/, '')
+
+/** A criterion only the person can check (a real device, a deploy, an account). */
+export const isManual = (criterion: string) => /\[manual\]/i.test(criterion)
+
+/** Lines of a review that mark a criterion an agent could check as not met. */
+export const unmetChecks = (review: string) =>
+  review.split('\n').filter(l => /\bNOT MET\b/.test(l) && !/manual/i.test(l)).map(l => l.trim())
+
 /** A card waiting for you, or done with a branch to merge: what a notification is raised for. */
 export const needsYou = (c: Card) => c.status.startsWith('Needs you')
 
@@ -122,20 +132,34 @@ export const started = (board: Board, id: number, agentId: string, now: number) 
   update(board, id, c => touch(c, now, { agentId, status: `${STAGE_NAMES[c.stage]}: agent working` }, `${STAGE_NAMES[c.stage]} started`))
 
 /** Moves a card on with what its agent answered. */
-export const finished = (board: Board, id: number, answer: string, tokens: number, now: number): Board =>
+export const finished = (board: Board, id: number, reply: string, tokens: number, now: number): Board =>
   update(board, id, c => {
+    let answer = reply
     const spent = { agentId: undefined, tokens: c.tokens + tokens }
     if (c.stage === 'plan') {
-      return touch(c, now, { ...spent, plan: answer, criteria: parseCriteria(answer), stage: 'approve', status: 'Needs you: approve the plan' }, 'Plan written')
+      const repo = parseRepo(answer)
+      return touch(
+        c,
+        now,
+        { ...spent, plan: answer, criteria: parseCriteria(answer), ...(repo ? { repo } : { repo: undefined }), stage: 'approve', status: 'Needs you: approve the plan' },
+        repo ? `Plan written (works in ${repo})` : 'Plan written',
+      )
     }
     if (c.stage === 'execute') {
       return touch(c, now, { ...spent, result: answer, stage: 'review', status: 'Queued for review' }, 'Work done')
     }
     if (c.stage === 'review') {
-      const passed = /^\s*VERDICT:\s*PASS/im.test(answer)
+      // The board holds the reviewer to the criteria: a PASS with a checkable criterion NOT MET is a fail.
+      const unmet = unmetChecks(answer)
+      const passed = /^\s*VERDICT:\s*PASS/im.test(answer) && unmet.length === 0
       if (passed) {
-        const status = c.worktree ? `Needs you: merge or discard ${c.worktree.branch}` : 'Done'
-        return touch(c, now, { ...spent, review: answer, stage: 'done', status }, 'Review passed')
+        const manual = (c.criteria ?? []).filter(isManual)
+        const then = c.worktree ? `, then merge or discard ${c.worktree.branch}` : ''
+        const status = manual.length ? `Needs you: check ${manual.length} by hand${then}` : c.worktree ? `Needs you: merge or discard ${c.worktree.branch}` : 'Done'
+        return touch(c, now, { ...spent, review: answer, stage: 'done', status }, manual.length ? 'Review passed; manual checks left' : 'Review passed')
+      }
+      if (/^\s*VERDICT:\s*PASS/im.test(answer)) {
+        answer = `${answer}\n\nThe board counts this as a FAIL: ${unmet.length} checkable criteria NOT MET.`
       }
       if (c.attempts < MAX_ATTEMPTS) {
         return touch(

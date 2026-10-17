@@ -15,7 +15,10 @@ export const AGENTS: Record<Role, { name: string; description: string; prompt: s
       'the files to change and how, how to verify the result, and any open questions or risks. Your answer is ' +
       'shown to the user for approval and handed to another agent to carry out, so make it complete on its own. ' +
       'End the plan with a heading "Acceptance criteria" and a short checklist under it ("- [ ] ..."), each item ' +
-      'something a reviewer can check: a behaviour, a test that passes, a file that exists.' + SUGGEST,
+      'something a reviewer can check: a behaviour, a test that passes, a file that exists. Mark an item only the ' +
+      'user can check (a real device or OS, a deploy, a real account) with "[manual]" at its start. If the work ' +
+      'belongs in a git repository other than your working directory, put a line "Repository: /absolute/path" ' +
+      'near the top of the plan; the work is then done on a branch of that repository.' + SUGGEST,
     tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'mcp__agent-board__suggest_card'],
   },
   execute: {
@@ -36,9 +39,11 @@ export const AGENTS: Record<Role, { name: string; description: string; prompt: s
       'You review finished work for a card on the agent board, without changing any file. Compare the changes ' +
       '(use git diff where the project is a git repository) with the plan and the request; run the tests if there ' +
       'are any. Start your answer with exactly "VERDICT: PASS" or "VERDICT: FAIL", then list the findings, most ' +
-      'serious first, each with the file and what is wrong. Then list each acceptance criterion as MET or NOT MET ' +
-      'with the evidence. Fail for real problems only: bugs, missing parts of the request, broken builds or ' +
-      'tests, or a criterion NOT MET.' + SUGGEST,
+      'serious first, each with the file and what is wrong. Then list each acceptance criterion on its own line as ' +
+      '"MET: <criterion>", "NOT MET: <criterion>" or, for one marked [manual], "MANUAL: <criterion>", with the ' +
+      'evidence. Fail for bugs, missing parts of the request, broken builds or tests, or any criterion NOT MET ' +
+      'that is not [manual]; the board fails such a review even if you write PASS. Do not excuse a NOT MET. ' +
+      'Suggest a card for each finding outside this card and for any follow-up the work needs.' + SUGGEST,
     disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
   },
 }

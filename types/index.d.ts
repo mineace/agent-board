@@ -8,6 +8,8 @@ export type Card = {
   id: number
   title: string
   request: string
+  /** The repository the work belongs in, when the plan names one other than the project. */
+  repo?: string
   /** Who suggested it, when a board agent did ("the executor on #4"). */
   source?: string
   stage: Stage
@@ -33,6 +35,8 @@ export type Card = {
 }
 
 export type Worktree = {
+  /** The repository it is a worktree of: where the branch merges. */
+  repo: string
   path: string
   branch: string
   /** The commit it branched from: the reviewer diffs from here. */

@@ -238,6 +238,7 @@ function renderDetail() {
     <div class="models">${ROLES.map(([role, name]) => `<label>${name}
       <select data-role="${role}">${MODELS.map(m => `<option value="${m}" ${(c.models?.[role] ?? defaults[role] ?? 'inherit') === m ? 'selected' : ''}>${MODEL_NAMES[m]}</option>`).join('')}</select></label>`).join('')}</div>
     ${c.source ? `<div class="muted">Suggested by ${esc(c.source)}</div>` : ''}
+    ${c.repo ? `<div class="muted">Works in ${esc(c.repo)}</div>` : ''}
     ${c.worktree ? `<div class="muted">Branch <code>${esc(c.worktree.branch)}</code> · ${esc(c.worktree.path)}</div>` : ''}
     ${section('Request', c.request)}${section('Plan', c.plan)}${c.criteria?.length ? section('Acceptance criteria', c.criteria.map(x => `- ${x}`).join('\n')) : ''}${section('Work summary', c.result)}${section('Review', c.review)}
     <section><h4>History</h4><div class="log">${(c.log ?? []).slice().reverse().map(l =>

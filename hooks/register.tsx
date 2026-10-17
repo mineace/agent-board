@@ -106,11 +106,13 @@ async function git($: EngineInterface, cwd: string, args: string[]) {
  */
 async function ensureWorktree($: EngineInterface, ctx: Ctx, card: Card) {
   if (!ctx.settings.worktrees || card.worktree) return card.worktree
-  const top = await git($, ctx.cwd, ['rev-parse', '--show-toplevel'])
-  const base = await git($, ctx.cwd, ['rev-parse', 'HEAD'])
+  // The plan may name another repository: the branch is made, and later merged, there.
+  const from = card.repo ?? ctx.cwd
+  const top = await git($, from, ['rev-parse', '--show-toplevel'])
+  const base = await git($, from, ['rev-parse', 'HEAD'])
   const now = await $.clock.now()
   if (!top.ok || !base.ok) {
-    await save($, ctx, b => update1(b, card.id, now, 'No worktree: not a git repository with a commit; working in the project'))
+    await save($, ctx, b => update1(b, card.id, now, `No worktree: ${from} is not a git repository with a commit; working in the project`))
     return undefined
   }
   const path = `${top.out}/.claude/worktrees/card-${card.id}`
@@ -122,7 +124,7 @@ async function ensureWorktree($: EngineInterface, ctx: Ctx, card: Card) {
     await save($, ctx, b => update1(b, card.id, now, `No worktree (${made.err}); working in the project`))
     return undefined
   }
-  const worktree = { path, branch, base: base.out }
+  const worktree = { repo: top.out, path, branch, base: base.out }
   await save($, ctx, b => withWorktree(b, card.id, worktree, now))
   return worktree
 }
@@ -162,15 +164,15 @@ async function closeBranch($: EngineInterface, ctx: Ctx, card: Card, how: 'merge
   const now = await $.clock.now()
   if (how === 'merge') {
     await commitWork($, card)
-    const merged = await git($, ctx.cwd, ['merge', '--no-ff', '--no-edit', wt.branch])
+    const merged = await git($, wt.repo ?? ctx.cwd, ['merge', '--no-ff', '--no-edit', wt.branch])
     if (!merged.ok) {
-      await git($, ctx.cwd, ['merge', '--abort'])
+      await git($, wt.repo ?? ctx.cwd, ['merge', '--abort'])
       await save($, ctx, b => gitFailed(b, card.id, `merge of ${wt.branch} failed (${merged.err}); the branch is kept`, now))
       return
     }
   }
-  await git($, ctx.cwd, ['worktree', 'remove', '--force', wt.path])
-  await git($, ctx.cwd, ['branch', how === 'merge' ? '-d' : '-D', wt.branch])
+  await git($, wt.repo ?? ctx.cwd, ['worktree', 'remove', '--force', wt.path])
+  await git($, wt.repo ?? ctx.cwd, ['branch', how === 'merge' ? '-d' : '-D', wt.branch])
   await save($, ctx, b => branchClosed(b, card.id, how === 'merge' ? 'merged' : 'discarded', now))
 }
 
@@ -266,7 +268,7 @@ async function press($: EngineInterface, ctx: Ctx, id: number, action: Action) {
   const card = find(await read($, boardAtom), id)
   if (card && (action === 'merge' || action === 'discard')) return closeBranch($, ctx, card, action)
   // A deleted card's worktree folder goes; its branch stays, so the work can still be found.
-  if (card?.worktree && action === 'delete') await git($, ctx.cwd, ['worktree', 'remove', '--force', card.worktree.path])
+  if (card?.worktree && action === 'delete') await git($, card.worktree.repo ?? ctx.cwd, ['worktree', 'remove', '--force', card.worktree.path])
   const now = await $.clock.now()
   await save($, ctx, b => act(b, id, action, now))
   if (action === 'delete') await update($, viewAtom, () => ({ tab: 'board' }))
@@ -685,6 +687,7 @@ export const register: Register = (on, options) => {
             ))}
           </Box>
           {card.source && <Text dimColor>Suggested by {card.source}</Text>}
+          {card.repo && <Text dimColor>Works in {card.repo}</Text>}
           {card.worktree && <Text dimColor>Branch {card.worktree.branch} · {card.worktree.path}</Text>}
           {block('Request', card.request)}
           {block('Plan', card.plan)}

@@ -1,6 +1,6 @@
 {
   "name": "agent-board",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "A kanban board in Claude Code: cards run through planner, executor and reviewer agents, each in its own context, with an approval step after planning.",
   "types": "./types/index.d.ts",
   "userConfig": {

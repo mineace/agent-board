@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { isAllowedCall, isAllowedCommand } from '../hooks/allowlist'
-import { EMPTY, act, actionsFor, addCard, branchClosed, finished, parseCriteria, started, withWorktree } from '../hooks/board'
+import { EMPTY, act, actionsFor, addCard, branchClosed, finished, parseCriteria, parseRepo, started, withWorktree } from '../hooks/board'
 import { taskFor } from '../hooks/prompts'
 
 const ROOT = '/proj/.claude/worktrees/card-1'
@@ -77,7 +77,7 @@ test('the plan’s acceptance criteria land on the card and in the next prompts'
 test('a card on a branch waits for a merge or a discard once its review passes', async () => {
   let [b] = addCard(EMPTY, 'Add dark mode', 0, true)
   b = act(finished(started(b, 1, 'a1', 1), 1, 'plan', 0, 2), 1, 'approve', 3)
-  b = withWorktree(b, 1, { path: ROOT, branch: 'board/card-1', base: 'abc123' }, 4)
+  b = withWorktree(b, 1, { repo: '/proj', path: ROOT, branch: 'board/card-1', base: 'abc123' }, 4)
   expect(taskFor(b.cards[0]!, 'execute')).toContain('branch board/card-1')
   b = finished(started(b, 1, 'a2', 5), 1, 'done it', 0, 6)
   b = finished(started(b, 1, 'a3', 7), 1, 'VERDICT: PASS', 0, 8)
@@ -96,4 +96,31 @@ test('a suggested card waits in Backlog even with auto-start on', async () => {
   expect(card.stage).toBe('backlog')
   expect(card.source).toBe('the executor on #4')
   expect(card.status).toBe('Suggested by the executor on #4')
+})
+
+const PLAN = ['Repository: /home/me/labouronsos', '1. Build the wizard', '', '## Acceptance criteria', '- [ ] Unit tests pass', '- [ ] [manual] Runs on Windows with a fresh account'].join('\n')
+
+const reviewed = (review: string) => {
+  let [b] = addCard(EMPTY, 'Setup wizard', 0, true)
+  b = act(finished(started(b, 1, 'a1', 1), 1, PLAN, 0, 2), 1, 'approve', 3)
+  b = finished(started(b, 1, 'a2', 4), 1, 'built it', 0, 5)
+  return finished(started(b, 1, 'a3', 6), 1, review, 0, 7).cards[0]!
+}
+
+test('a plan can name the repository its work belongs in', async () => {
+  expect(parseRepo(PLAN)).toBe('/home/me/labouronsos')
+  expect(parseRepo('no repo line')).toBe(undefined)
+  expect(reviewed('VERDICT: PASS\nMET: Unit tests pass\nMANUAL: [manual] Runs on Windows').repo).toBe('/home/me/labouronsos')
+})
+
+test('the board fails a PASS with a checkable criterion NOT MET', async () => {
+  const card = reviewed('VERDICT: PASS\nNOT MET: Unit tests pass (environment limit)\nMANUAL: [manual] Runs on Windows')
+  expect(card.stage).toBe('execute')
+  expect(card.review).toContain('The board counts this as a FAIL')
+})
+
+test('a passed card with manual criteria waits for your check', async () => {
+  const card = reviewed('VERDICT: PASS\nMET: Unit tests pass\nNOT MET: [manual] Runs on Windows, not run here')
+  expect(card.stage).toBe('done')
+  expect(card.status).toBe('Needs you: check 1 by hand')
 })

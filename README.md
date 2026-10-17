@@ -28,6 +28,10 @@ From WSL, open `http://localhost:4848` in your Windows browser. It needs Node.js
 - Ask Claude to "add a card for …" (tool `add_card`), or "what's on the board" (tool `board_status`).
 - A line above the prompt shows what is running, queued, and what needs you.
 
+If the work belongs in another git repository, the plan says so (`Repository: /path`) and the card's branch is made, and merged, there.
+
+Criteria only you can check (a real device, a deploy, a real account) are marked `[manual]`. The board holds the reviewer to the rest: a PASS with a checkable criterion NOT MET counts as a fail and goes back to Execute. A passed card with manual criteria waits as **Needs you: check by hand**. The reviewer also suggests Backlog cards for problems it finds outside the card and for follow-up work.
+
 When a review passes, the card offers **Merge branch** (merges `board/card-N` into the branch your project has checked out) or **Discard branch**. A merge that conflicts is aborted and the branch kept.
 
 You get a desktop notification whenever a card needs you: a plan to approve, a stopped agent, a review failing twice, a branch to merge.

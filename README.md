@@ -72,6 +72,10 @@ The board is saved in `.claude/board.json` in your project (and `.claude/board-v
 
 Works with [usage-pacer](https://github.com/mineace/claude-usage-meter): a handoff carries the board's open cards to the fresh agent.
 
+## On your phone
+
+Use [Tailscale](https://tailscale.com) on your computer and phone, then on the computer run `tailscale serve 4848`. Put the name it shows (like `mypc.tail1234.ts.net`) in the setting **Browser board: extra addresses** (`/config` → agent-board), restart the session, and open `https://mypc.tail1234.ts.net` on your phone. Only your own devices can reach it.
+
 ## Safety
 
 Agents on the board can use tools, so the browser board only listens on 127.0.0.1, refuses requests addressed to any other host name, and accepts changes only with a token that is new each session and known only to the page it serves. Setting the address to `0.0.0.0` lets anyone on your network read the board.

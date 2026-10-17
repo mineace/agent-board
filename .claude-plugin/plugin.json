@@ -1,6 +1,6 @@
 {
   "name": "agent-board",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "A kanban board in Claude Code: cards run through planner, executor and reviewer agents, each in its own context, with an approval step after planning.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -87,6 +87,12 @@
       "title": "Agents run safe commands without asking",
       "description": "Each board agent runs its role's allowlisted commands (see hooks/allowlist.ts) without a permission prompt, and in auto mode without auto mode's check; the board also approves starting its own agents. Anything else still asks. Off by default.",
       "default": false
+    },
+    "webExtraHosts": {
+      "type": "string",
+      "title": "Browser board: extra addresses",
+      "description": "Other names the browser board answers to, comma-separated, such as your Tailscale name (mypc.tailnet-name.ts.net) when you run `tailscale serve 4848`. Empty: only localhost.",
+      "default": ""
     }
   }
 }

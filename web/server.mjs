@@ -7,11 +7,14 @@ import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const [port, host, boardFile, viewFile] = process.argv.slice(2)
+const [port, host, boardFile, viewFile, extraHosts = ''] = process.argv.slice(2)
 const here = dirname(fileURLToPath(import.meta.url))
 // Changes need this token, which only the page served here holds: another site cannot read it.
 const token = randomBytes(24).toString('hex')
-const allowedHosts = new Set([`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`, `${host}:${port}`])
+// Extra names the person listed (a Tailscale address, say), with or without a port: a proxy such as
+// `tailscale serve` forwards the name the phone asked for.
+const extra = extraHosts.split(',').map(h => h.trim().toLowerCase()).filter(Boolean)
+const allowedHosts = new Set([`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`, `${host}:${port}`, ...extra, ...extra.map(h => `${h}:${port}`)])
 const MAX_BODY = 256 * 1024
 
 const readJson = async (path, fallback) => {
@@ -42,7 +45,7 @@ const body = req =>
 
 const server = createServer(async (req, res) => {
   // A page on another site that renamed itself to this address (DNS rebinding) is refused.
-  if (!allowedHosts.has(req.headers.host ?? '')) return send(res, 403, 'text/plain', 'Forbidden host')
+  if (!allowedHosts.has((req.headers.host ?? '').toLowerCase())) return send(res, 403, 'text/plain', 'Forbidden host')
   const url = new URL(req.url ?? '/', 'http://localhost')
   try {
     if (req.method === 'GET' && url.pathname === '/') {

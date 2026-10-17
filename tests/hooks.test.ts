@@ -53,7 +53,7 @@ test('the browser server starts and what the page sends reaches the board', asyn
   await settle()
   expect(w.argv?.[0]).toBe('node')
   expect(String(w.argv?.[1])).toContain('web/server.mjs')
-  expect(w.argv?.slice(2)).toEqual(['4848', '127.0.0.1', BOARD, VIEW])
+  expect(w.argv?.slice(2)).toEqual(['4848', '127.0.0.1', BOARD, VIEW, ''])
   const card = board(w).cards[0]
   expect(card?.models.execute).toBe('haiku')
   // Approve was not on offer while planning: a stale page cannot skip the plan.

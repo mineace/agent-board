@@ -47,7 +47,7 @@ type Ctx = {
   settings: Settings
   isPumping: boolean
   isPaused: boolean
-  web: { port: number; host: string; url?: string; problem?: string }
+  web: { port: number; host: string; extraHosts: string; url?: string; problem?: string }
   /** Cards each running agent has suggested, by agent id: three at most. */
   suggested: Map<string, number>
 }
@@ -330,7 +330,7 @@ async function applyWeb($: EngineInterface, ctx: Ctx, a: WebAction) {
 async function serve($: EngineInterface, ctx: Ctx) {
   const root = $.plugin.root.replace(/\/\.claude-plugin\/?$/, '')
   const server = $.process.spawn({
-    argv: ['node', `${root}/web/server.mjs`, String(ctx.web.port), ctx.web.host, fileOf(ctx), viewFileOf(ctx)],
+    argv: ['node', `${root}/web/server.mjs`, String(ctx.web.port), ctx.web.host, fileOf(ctx), viewFileOf(ctx), ctx.web.extraHosts],
     cwd: ctx.cwd,
   })
   let pending = ''
@@ -372,7 +372,7 @@ export const register: Register = (on, options) => {
     isPumping: false,
     isPaused: false,
     suggested: new Map(),
-    web: { port: Math.max(0, Math.floor(Number(options.webPort ?? 4848))), host: String(options.webHost ?? '127.0.0.1') },
+    web: { port: Math.max(0, Math.floor(Number(options.webPort ?? 4848))), host: String(options.webHost ?? '127.0.0.1'), extraHosts: String(options.webExtraHosts ?? '') },
     settings: {
       maxParallel: Math.max(1, Number(options.maxParallel ?? 1)),
       autoStart: options.autoStart !== false,

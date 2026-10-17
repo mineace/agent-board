@@ -186,7 +186,13 @@ async function load($: EngineInterface, ctx: Ctx) {
   // A reload re-reads the file; when it is missing or unreadable, the cards held in memory win.
   const isFileLost = text === undefined || (fromFile.cards.length === 0 && text.trim() !== '' && !text.includes('"cards"'))
   const base = isFileLost && held.cards.length ? held : fromFile
-  const board = orphaned(base, await $.clock.now())
+  // A reload re-runs session.start: agents still working keep their cards.
+  const alive = new Set(
+    (await $.agent.list().catch(() => []))
+      .filter(a => a.status === 'pending' || a.status === 'running' || a.status === 'waiting')
+      .map(a => a.id),
+  )
+  const board = orphaned(base, await $.clock.now(), alive)
   await update($, boardAtom, () => board)
   if (base === held) await $.fs.write(fileOf(ctx), writeBoard(board)).catch(() => undefined)
   return board

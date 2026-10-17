@@ -156,11 +156,14 @@ export const failed = (board: Board, id: number, why: string, now: number) =>
     touch(c, now, { agentId: undefined, status: `Needs you: ${STAGE_NAMES[c.stage]} stopped (${why})` }, `${STAGE_NAMES[c.stage]} stopped: ${why}`),
   )
 
-/** Cards whose agent belonged to an earlier session: queue them again. */
-export const orphaned = (board: Board, now: number): Board => ({
+/**
+ * Cards whose agent is gone (an earlier session, or one that ended unseen): queue them again.
+ * `alive` holds the agents still working, so a reload mid-run leaves their cards alone.
+ */
+export const orphaned = (board: Board, now: number, alive: ReadonlySet<string> = new Set()): Board => ({
   ...board,
   cards: board.cards.map(c =>
-    c.agentId ? touch(c, now, { agentId: undefined, status: `Queued: ${STAGE_NAMES[c.stage]} restarted` }, 'Agent lost with the last session; restarting') : c,
+    c.agentId && !alive.has(c.agentId) ? touch(c, now, { agentId: undefined, status: `Queued: ${STAGE_NAMES[c.stage]} restarted` }, 'Agent lost with the last session; restarting') : c,
   ),
 })
 

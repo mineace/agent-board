@@ -55,3 +55,13 @@ test('only well-formed browser actions get through', async () => {
   expect(parseWebAction('{"op":"add","text":"   "}')).toBe(undefined)
   expect(parseWebAction('not json')).toBe(undefined)
 })
+
+test('a reload mid-run leaves the cards of agents still working alone', async () => {
+  let [b] = addCard(EMPTY, 'One', 0, true)
+  ;[b] = addCard(b, 'Two', 0, true)
+  b = started(started(b, 1, 'a1', 1), 2, 'a2', 1)
+  b = orphaned(b, 2, new Set(['a1']))
+  expect(b.cards[0]?.agentId).toBe('a1')
+  expect(b.cards[1]?.agentId).toBe(undefined)
+  expect(b.cards[1]?.status).toContain('restarted')
+})

@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent board</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --col: #eeece7; --text: #1f1e1c; --dim: #6f6b63; --line: #dcd8cf;
+    --accent: #c4623f; --accent-text: #ffffff; --ok: #2f7d4f; --warn: #a86a00; --bad: #b3372b; --drop: #f3dccf;
+    --shadow: 0 1px 2px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1918; --panel: #262523; --col: #201f1d; --text: #ece9e3; --dim: #a29d93; --line: #3a3835;
+      --accent: #e07d58; --accent-text: #1a1918; --ok: #6cc08b; --warn: #e2a63b; --bad: #ec7a6c; --drop: #3d2d25;
+      --shadow: 0 1px 2px rgba(0,0,0,.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  .project { color: var(--dim); }
+  .spacer { flex: 1; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+  .pill.on { color: var(--ok); border-color: currentColor; }
+  .pill.off { color: var(--bad); border-color: currentColor; }
+  .pill.warn { color: var(--warn); border-color: currentColor; }
+  button, select, input, textarea { font: inherit; color: inherit; }
+  button { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+  button:hover { border-color: var(--dim); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  .board { display: grid; grid-template-columns: repeat(6, minmax(200px, 1fr)); gap: 12px; padding: 16px; overflow-x: auto; align-items: start; }
+  .col { background: var(--col); border-radius: 10px; padding: 8px; min-height: 120px; border: 2px solid transparent; }
+  .col.can-drop { border-color: var(--accent); border-style: dashed; }
+  .col.over { background: var(--drop); }
+  .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); margin: 4px 6px 8px; display: flex; justify-content: space-between; }
+  .card { background: var(--panel); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; box-shadow: var(--shadow); cursor: pointer; border-left: 3px solid transparent; }
+  .card[draggable="true"] { cursor: grab; }
+  .card.running { border-left-color: var(--ok); }
+  .card.needs { border-left-color: var(--warn); }
+  .card .title { font-weight: 550; overflow-wrap: anywhere; }
+  .card .status { color: var(--dim); font-size: 12px; margin-top: 4px; }
+  .card .meta { color: var(--dim); font-size: 11px; margin-top: 4px; display: flex; gap: 8px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 5px; animation: pulse 1.4s infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  .empty { color: var(--dim); font-size: 12px; padding: 6px; }
+  .banner { margin: 12px 16px 0; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--warn); color: var(--warn); }
+  .banner.bad { border-color: var(--bad); color: var(--bad); }
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); padding: 0; width: min(560px, calc(100vw - 32px)); box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+  dialog::backdrop { background: rgba(0,0,0,.35); }
+  .dlg { padding: 16px; display: grid; gap: 12px; }
+  .dlg h3 { margin: 0; font-size: 16px; }
+  .row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+  textarea { width: 100%; min-height: 160px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; resize: vertical; }
+  label.field { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+  label.field small { display: block; color: var(--dim); }
+  select, input[type="number"] { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+  input[type="number"] { width: 80px; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; transform: translateX(100%); transition: transform .18s ease, visibility .18s; visibility: hidden; }
+  .drawer.open { transform: none; visibility: visible; box-shadow: -8px 0 30px rgba(0,0,0,.15); }
+  .drawer .inner { padding: 16px; display: grid; gap: 14px; }
+  .drawer h3 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+  .models { display: flex; gap: 12px; flex-wrap: wrap; color: var(--dim); font-size: 12px; }
+  .models label { display: grid; gap: 2px; }
+  section h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); }
+  .text { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-wrap: anywhere; }
+  .text p { margin: 0 0 8px; } .text p:last-child { margin: 0; }
+  .text pre { background: var(--col); padding: 8px; border-radius: 6px; overflow-x: auto; }
+  .text code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+  .text h1, .text h2, .text h3, .text h4 { font-size: 14px; margin: 10px 0 6px; }
+  .text ul, .text ol { margin: 0 0 8px; padding-left: 20px; }
+  .log { color: var(--dim); font-size: 12px; display: grid; gap: 2px; }
+  .muted { color: var(--dim); }
+  @media (max-width: 700px) {
+    .board { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agent board</h1>
+  <span class="project" id="project"></span>
+  <span class="spacer"></span>
+  <span class="pill" id="conn">connecting…</span>
+  <span class="pill" id="usage" hidden></span>
+  <button id="settingsBtn">Settings</button>
+  <button class="primary" id="newBtn">+ New card</button>
+</header>
+<div id="banners"></div>
+<main class="board" id="board"></main>
+
+<aside class="drawer" id="drawer" aria-hidden="true"><div class="inner" id="detail"></div></aside>
+
+<dialog id="newDlg">
+  <form class="dlg" method="dialog" id="newForm">
+    <h3>New card</h3>
+    <textarea id="newText" placeholder="What should be done? The first line becomes the title." required></textarea>
+    <div class="row">
+      <span class="muted spacer">Ctrl+Enter to add</span>
+      <button type="button" data-cancel>Cancel</button>
+      <button class="primary" value="add">Add card</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="settingsDlg">
+  <form class="dlg" method="dialog" id="settingsForm">
+    <h3>Settings</h3>
+    <label class="field"><span>Cards running at once<small>Agents working at the same time.</small></span><input type="number" min="1" max="8" name="maxParallel"></label>
+    <label class="field"><span>Plan new cards automatically<small>Off: new cards wait in Backlog.</small></span><input type="checkbox" name="autoStart"></label>
+    <label class="field"><span>Pause at plan usage %<small>Start no agent past this. 0 = never pause.</small></span><input type="number" min="0" max="100" name="pauseAtLimit"></label>
+    <label class="field"><span>Planner model</span><select name="planModel"></select></label>
+    <label class="field"><span>Executor model</span><select name="executeModel"></select></label>
+    <label class="field"><span>Reviewer model</span><select name="reviewModel"></select></label>
+    <div class="row"><button type="button" data-cancel>Cancel</button><button class="primary" value="save">Save</button></div>
+  </form>
+</dialog>
+
+<script>
+const TOKEN = '__BOARD_TOKEN__'
+const STAGES = ['backlog', 'plan', 'approve', 'execute', 'review', 'done']
+const STAGE_NAMES = { backlog: 'Backlog', plan: 'Plan', approve: 'Approve', execute: 'Execute', review: 'Review', done: 'Done' }
+const LABELS = { start: 'Start', approve: 'Approve plan', replan: 'Re-plan', retry: 'Retry', done: 'Mark done', delete: 'Delete', reopen: 'Reopen' }
+const MODELS = ['inherit', 'opus', 'sonnet', 'haiku']
+const MODEL_NAMES = { inherit: 'Same as session', opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku' }
+const ROLES = [['plan', 'Planner'], ['execute', 'Executor'], ['review', 'Reviewer']]
+
+let state = { board: { cards: [] }, view: {} }
+let online = false
+let openId = null
+let dragId = null
+let lastJson = ''
+
+const $ = id => document.getElementById(id)
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+const fmtTokens = n => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
+const ago = t => {
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000))
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : s < 86400 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`
+}
+
+// Enough markdown for plans and reviews: code blocks, headings, lists, bold, inline code.
+function md(text) {
+  const out = []
+  const blocks = String(text ?? '').split(/^```.*$/m)
+  blocks.forEach((block, i) => {
+    if (i % 2) return out.push(`<pre><code>${esc(block.replace(/^\n|\n$/g, ''))}</code></pre>`)
+    const inline = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    let list = null
+    const flush = () => { if (list) { out.push(`<${list.tag}>${list.items.join('')}</${list.tag}>`); list = null } }
+    for (const para of block.split(/\n{2,}/)) {
+      for (const line of para.split('\n')) {
+        const h = line.match(/^(#{1,4})\s+(.*)/)
+        const li = line.match(/^\s*([-*]|\d+[.)])\s+(.*)/)
+        if (h) { flush(); out.push(`<h4>${inline(h[2])}</h4>`) }
+        else if (li) {
+          const tag = /\d/.test(li[1]) ? 'ol' : 'ul'
+          if (!list || list.tag !== tag) { flush(); list = { tag, items: [] } }
+          list.items.push(`<li>${inline(li[2])}</li>`)
+        } else if (line.trim()) { flush(); out.push(`<p>${inline(line)}</p>`) }
+      }
+      flush()
+    }
+  })
+  return out.join('')
+}
+
+async function send(action) {
+  try {
+    const r = await fetch('/api/action', { method: 'POST', headers: { 'content-type': 'application/json', 'x-board-token': TOKEN }, body: JSON.stringify(action) })
+    if (!r.ok) throw new Error(await r.text())
+  } catch (err) {
+    alert(`The board could not do that: ${err.message}`)
+  }
+  setTimeout(poll, 250)
+  setTimeout(poll, 800)
+}
+
+// Where a dropped card goes, as the action the plugin already knows.
+function dropAction(card, stage) {
+  const acts = state.view.actions?.[card.id] ?? []
+  const want = { backlog: 'reopen', plan: card.stage === 'backlog' ? 'start' : 'replan', execute: 'approve', done: 'done' }[stage]
+  return want && acts.includes(want) && card.stage !== stage ? want : null
+}
+
+function renderBoard() {
+  const cards = state.board.cards ?? []
+  $('board').innerHTML = STAGES.map(stage => {
+    const here = cards.filter(c => c.stage === stage).sort((a, b) => b.updatedAt - a.updatedAt)
+    return `<section class="col" data-stage="${stage}">
+      <h2><span>${STAGE_NAMES[stage]}</span><span>${here.length}</span></h2>
+      ${here.map(c => {
+        const needs = c.status.startsWith('Needs you')
+        const draggable = STAGES.some(s => dropAction(c, s))
+        return `<article class="card ${c.agentId ? 'running' : ''} ${needs ? 'needs' : ''}" data-id="${c.id}" draggable="${draggable}">
+          <div class="title">#${c.id} ${esc(c.title)}</div>
+          <div class="status">${c.agentId ? '<span class="dot"></span>' : ''}${esc(c.status)}</div>
+          <div class="meta"><span>${ago(c.updatedAt)} ago</span>${c.tokens ? `<span>${fmtTokens(c.tokens)} tokens</span>` : ''}${c.attempts ? `<span>attempt ${c.attempts + 1}</span>` : ''}</div>
+        </article>`
+      }).join('') || (stage === 'backlog' && !cards.length ? '<div class="empty">No cards yet. Press + New card.</div>' : '')}
+    </section>`
+  }).join('')
+}
+
+function renderDetail() {
+  const c = (state.board.cards ?? []).find(x => x.id === openId)
+  $('drawer').classList.toggle('open', !!c)
+  $('drawer').setAttribute('aria-hidden', c ? 'false' : 'true')
+  if (!c) return
+  const acts = state.view.actions?.[c.id] ?? []
+  const defaults = state.view.settings?.models ?? {}
+  const section = (name, text) => (text ? `<section><h4>${name}</h4><div class="text">${md(text)}</div></section>` : '')
+  $('detail').innerHTML = `
+    <div class="row" style="justify-content:space-between;align-items:start">
+      <h3>#${c.id} ${esc(c.title)}</h3><button data-close>Close</button>
+    </div>
+    <div class="muted">${esc(STAGE_NAMES[c.stage])} · ${c.agentId ? '<span class="dot"></span>' : ''}${esc(c.status)}${c.tokens ? ` · ${fmtTokens(c.tokens)} tokens` : ''}</div>
+    <div class="row" style="justify-content:flex-start">${acts.map(a =>
+      `<button data-act="${a}" class="${a === 'approve' || a === 'start' || a === 'retry' ? 'primary' : a === 'delete' ? 'danger' : ''}">${LABELS[a]}</button>`).join('')}</div>
+    <div class="models">${ROLES.map(([role, name]) => `<label>${name}
+      <select data-role="${role}">${MODELS.map(m => `<option value="${m}" ${(c.models?.[role] ?? defaults[role] ?? 'inherit') === m ? 'selected' : ''}>${MODEL_NAMES[m]}</option>`).join('')}</select></label>`).join('')}</div>
+    ${section('Request', c.request)}${section('Plan', c.plan)}${section('Work summary', c.result)}${section('Review', c.review)}
+    <section><h4>History</h4><div class="log">${(c.log ?? []).slice().reverse().map(l =>
+      `<div>${new Date(l.at).toLocaleString()} — ${esc(l.text)}</div>`).join('')}</div></section>`
+}
+
+function renderChrome() {
+  const v = state.view
+  $('project').textContent = v.project ?? ''
+  $('conn').textContent = online ? 'session online' : 'session offline'
+  $('conn').className = `pill ${online ? 'on' : 'off'}`
+  const running = (state.board.cards ?? []).filter(c => c.agentId).length
+  const usage = $('usage')
+  usage.hidden = !online
+  usage.textContent = `${running} running · ${v.settings?.maxParallel ?? 1} at once`
+  const banners = []
+  if (!online) banners.push('<div class="banner bad">No Claude Code session is serving this board. Start one in the project and the board picks up where it was; agents only run while a session is open.</div>')
+  if (online && v.isPaused) banners.push(`<div class="banner">Paused: plan usage is at ${v.settings?.pauseAtLimit}% or more. Queued cards start when it drops.</div>`)
+  $('banners').innerHTML = banners.join('')
+  for (const b of [$('newBtn'), $('settingsBtn')]) b.disabled = !online
+}
+
+function render() {
+  renderChrome()
+  renderBoard()
+  renderDetail()
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/api/state', { cache: 'no-store' })
+    if (!r.ok) throw new Error(r.statusText)
+    const json = await r.text()
+    const wasOnline = online
+    online = true
+    if (json === lastJson && wasOnline) return
+    lastJson = json
+    state = JSON.parse(json)
+  } catch {
+    if (!online) return
+    online = false
+  }
+  // Leave a model menu alone while it is being used.
+  if (document.activeElement?.matches?.('#detail select')) { renderChrome(); renderBoard(); return }
+  render()
+}
+
+$('board').addEventListener('click', e => {
+  const card = e.target.closest('.card')
+  if (card) { openId = Number(card.dataset.id); renderDetail() }
+})
+$('detail').addEventListener('click', e => {
+  if (e.target.closest('[data-close]')) { openId = null; return renderDetail() }
+  const act = e.target.closest('[data-act]')?.dataset.act
+  if (!act) return
+  if (act === 'delete' && !confirm('Delete this card?')) return
+  const id = openId
+  if (act === 'delete') { openId = null; renderDetail() }
+  send({ op: 'act', id, action: act })
+})
+$('detail').addEventListener('change', e => {
+  const role = e.target.dataset?.role
+  if (role) send({ op: 'model', id: openId, role, model: e.target.value })
+})
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && openId !== null && !document.querySelector('dialog[open]')) { openId = null; renderDetail() }
+})
+
+// Drag a card onto a column it can move to: the columns it can go to are outlined.
+$('board').addEventListener('dragstart', e => {
+  const el = e.target.closest('.card')
+  if (!el) return
+  dragId = Number(el.dataset.id)
+  e.dataTransfer.effectAllowed = 'move'
+  const card = state.board.cards.find(c => c.id === dragId)
+  document.querySelectorAll('.col').forEach(col => col.classList.toggle('can-drop', !!dropAction(card, col.dataset.stage)))
+})
+$('board').addEventListener('dragend', () => {
+  dragId = null
+  document.querySelectorAll('.col').forEach(col => col.classList.remove('can-drop', 'over'))
+})
+$('board').addEventListener('dragover', e => {
+  const col = e.target.closest('.col.can-drop')
+  if (!col) return
+  e.preventDefault()
+  document.querySelectorAll('.col').forEach(c => c.classList.toggle('over', c === col))
+})
+$('board').addEventListener('drop', e => {
+  const col = e.target.closest('.col.can-drop')
+  const card = state.board.cards.find(c => c.id === dragId)
+  if (!col || !card) return
+  e.preventDefault()
+  const action = dropAction(card, col.dataset.stage)
+  if (action) send({ op: 'act', id: card.id, action })
+})
+
+$('newBtn').onclick = () => { $('newText').value = ''; $('newDlg').showModal(); $('newText').focus() }
+$('newText').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('newForm').requestSubmit($('newForm').querySelector('.primary')) })
+$('newDlg').addEventListener('close', () => {
+  const text = $('newText').value.trim()
+  if ($('newDlg').returnValue === 'add' && text) send({ op: 'add', text })
+})
+
+const settingsForm = $('settingsForm')
+for (const name of ['planModel', 'executeModel', 'reviewModel']) {
+  settingsForm.elements[name].innerHTML = MODELS.map(m => `<option value="${m}">${MODEL_NAMES[m]}</option>`).join('')
+}
+$('settingsBtn').onclick = () => {
+  const s = state.view.settings ?? {}
+  settingsForm.elements.maxParallel.value = s.maxParallel ?? 1
+  settingsForm.elements.autoStart.checked = s.autoStart !== false
+  settingsForm.elements.pauseAtLimit.value = s.pauseAtLimit ?? 90
+  settingsForm.elements.planModel.value = s.models?.plan ?? 'inherit'
+  settingsForm.elements.executeModel.value = s.models?.execute ?? 'inherit'
+  settingsForm.elements.reviewModel.value = s.models?.review ?? 'inherit'
+  $('settingsDlg').showModal()
+}
+$('settingsDlg').addEventListener('close', () => {
+  if ($('settingsDlg').returnValue !== 'save') return
+  const s = state.view.settings ?? {}
+  const f = settingsForm.elements
+  const next = {
+    maxParallel: Math.max(1, Math.min(8, Number(f.maxParallel.value) || 1)),
+    autoStart: f.autoStart.checked,
+    pauseAtLimit: Math.max(0, Math.min(100, Number(f.pauseAtLimit.value) || 0)),
+    planModel: f.planModel.value, executeModel: f.executeModel.value, reviewModel: f.reviewModel.value,
+  }
+  const was = { maxParallel: s.maxParallel, autoStart: s.autoStart, pauseAtLimit: s.pauseAtLimit,
+    planModel: s.models?.plan, executeModel: s.models?.execute, reviewModel: s.models?.review }
+  for (const [field, value] of Object.entries(next)) if (was[field] !== value) send({ op: 'setting', field, value })
+})
+
+for (const b of document.querySelectorAll('[data-cancel]')) b.onclick = () => b.closest('dialog').close('cancel')
+
+poll()
+setInterval(poll, 1000)
+setInterval(() => online && renderBoard(), 30000)
+</script>
+</body>
+</html>

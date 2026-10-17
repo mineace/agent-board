@@ -1,0 +1,6 @@
+{
+  "name": "agent-board",
+  "description": "A kanban board where planner, executor and reviewer agents work your cards.",
+  "owner": { "name": "mineace" },
+  "plugins": [{ "name": "agent-board", "source": "./" }]
+}

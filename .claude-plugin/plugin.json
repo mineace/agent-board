@@ -1,0 +1,74 @@
+{
+  "name": "agent-board",
+  "version": "0.2.0",
+  "description": "A kanban board in Claude Code: cards run through planner, executor and reviewer agents, each in its own context, with an approval step after planning.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "maxParallel": {
+      "type": "number",
+      "title": "Cards running at once",
+      "description": "How many cards may have an agent working at the same time.",
+      "default": 1
+    },
+    "planModel": {
+      "type": "string",
+      "title": "Planner model",
+      "description": "Model the planner agent uses (inherit = the session's model).",
+      "options": [
+        "inherit",
+        "opus",
+        "sonnet",
+        "haiku"
+      ],
+      "default": "inherit"
+    },
+    "executeModel": {
+      "type": "string",
+      "title": "Executor model",
+      "description": "Model the executor agent uses (inherit = the session's model).",
+      "options": [
+        "inherit",
+        "opus",
+        "sonnet",
+        "haiku"
+      ],
+      "default": "inherit"
+    },
+    "reviewModel": {
+      "type": "string",
+      "title": "Reviewer model",
+      "description": "Model the reviewer agent uses (inherit = the session's model).",
+      "options": [
+        "inherit",
+        "opus",
+        "sonnet",
+        "haiku"
+      ],
+      "default": "inherit"
+    },
+    "autoStart": {
+      "type": "boolean",
+      "title": "Start planning new cards automatically",
+      "description": "Off: new cards wait in Backlog until you press Start.",
+      "default": true
+    },
+    "pauseAtLimit": {
+      "type": "number",
+      "title": "Pause new work at plan usage %",
+      "description": "Start no agent while the 5-hour or 7-day limit is at or above this. 0 turns the pause off.",
+      "default": 90
+    },
+    "webPort": {
+      "type": "number",
+      "title": "Browser board port",
+      "description": "The browser board is served at http://localhost:<port> while a session runs. 0 turns it off.",
+      "default": 4848
+    },
+    "webHost": {
+      "type": "string",
+      "title": "Browser board address",
+      "description": "Where the browser board listens. 127.0.0.1 keeps it to this machine (WSL included); 0.0.0.0 opens it to your network.",
+      "default": "127.0.0.1"
+    }
+  }
+}

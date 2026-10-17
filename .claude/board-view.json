@@ -1,1 +1,0 @@
-{"project":"agent-board","settings":{"maxParallel":1,"autoStart":true,"pauseAtLimit":90,"worktrees":true,"notify":true,"allowlist":false,"models":{"plan":"inherit","execute":"inherit","review":"inherit"}},"isPaused":false,"actions":{}}
